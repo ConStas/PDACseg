@@ -1,6 +1,6 @@
 # PDACseg
 
-# PanTS Challenge Submission 
+# PanTS Evaluation Submission 
 
 **Author:** Konstantinos Stasinos MD, PhD, Christos Athanasiou MD, PhD
 
