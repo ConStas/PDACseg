@@ -13,6 +13,15 @@ This repository contains the inference script and model weights for evaluating o
 * `monai` >= 1.3.0
 * `nibabel`
 
+#### Class Output Mapping
+The model outputs a single `.nii.gz` mask per input image, with a 6-class mapping system:
+* `0`: Background
+* `1`: Pancreas (Note: Includes the Pancreatic Duct due to PanTS label 21 integration)
+* `2`: Pancreatic Tumor
+* `3`: Superior Mesenteric Artery (SMA)
+* `4`: Vein (SMV / Portal Vein)
+* `5`: Biliary Tract / CBD
+
 ## Usage Instructions
 The `evaluation_script.py` script requires three arguments: the input directory containing raw CT images, the output directory for the prediction masks, and the path to the model weights.
 
