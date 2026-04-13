@@ -46,7 +46,6 @@ test_img_dir = '/mnt/dev1/kstasinos/panTS/PanTS/data/ImageTe'
 test_lbl_dir = '/mnt/dev1/kstasinos/panTS/PanTS/data/LabelTe' # Double-check this path!
 
 test_files = []
-# Get all the patient folder names (e.g., 'PanTS_00009001')
 case_dirs = sorted([d for d in os.listdir(test_img_dir) if os.path.isdir(os.path.join(test_img_dir, d))])
 
 
@@ -89,22 +88,41 @@ with torch.no_grad():
         with torch.amp.autocast('cuda', dtype=torch.float16):
             logits = sliding_window_inference(inputs, (96, 96, 96), 2, model, overlap=0.5, sw_device=device, device=torch.device('cpu'))
             
-        # 1. Extract Tumor Probabilities & Hard Mask
-        probs = F.softmax(logits, dim=1)[0, 2].numpy() # Class 2 is Tumor
-        pred_mask = (torch.argmax(logits, dim=1)[0] == 2).numpy()
-        gt_mask = (labels[0, 0].cpu() == 2).numpy()
+# STEP 1: Find the TRUE Pancreas (Largest single component)
+        labeled_panc, num_panc = label(pred_panc)
+        if num_panc > 0:
+            sizes = [np.sum(labeled_panc == i) for i in range(1, num_panc + 1)]
+            largest_panc_idx = np.argmax(sizes) + 1
+            true_panc = (labeled_panc == largest_panc_idx)
+            
+            # STEP 2: Draw a tight bounding box around the TRUE pancreas
+            coords = np.argwhere(true_panc)
+            z_min, y_min, x_min = coords.min(axis=0)
+            z_max, y_max, x_max = coords.max(axis=0)
 
-        labeled_pred, num_features = label(pred_mask)
-        cleaned_pred = np.zeros_like(pred_mask)
-        
-        for i in range(1, num_features + 1):
-            component = (labeled_pred == i)
-            # Only keep the tumor blob if it is larger than 200 voxels (filters out noise speckles)
+            pad = 30 # 30 voxel safety padding
+            z_min = max(0, z_min - pad); z_max = min(pred_tumor.shape[0], z_max + pad)
+            y_min = max(0, y_min - pad); y_max = min(pred_tumor.shape[1], y_max + pad)
+            x_min = max(0, x_min - pad); x_max = min(pred_tumor.shape[2], x_max + pad)
+
+            safe_zone = np.zeros_like(pred_tumor)
+            safe_zone[z_min:z_max, y_min:y_max, x_min:x_max] = True
+            
+            # Restrict tumor predictions to the safe zone
+            pred_mask = np.logical_and(pred_tumor, safe_zone)
+        else:
+            # If the model completely missed the pancreas, wipe the tumor prediction
+            pred_mask = np.zeros_like(pred_tumor) 
+
+        # STEP 3: Remove tiny speckles (< 200 voxels) from the surviving tumor
+        labeled_tumor, num_tumor = label(pred_mask)
+        cleaned_tumor = np.zeros_like(pred_mask)
+        for i in range(1, num_tumor + 1):
+            component = (labeled_tumor == i)
             if component.sum() > 200: 
-                cleaned_pred[component] = True
+                cleaned_tumor[component] = True
                 
-        # Overwrite the noisy prediction with our clean one before calculating metrics
-        pred_mask = cleaned_pred 
+        pred_mask = cleaned_tumor
 
         # 2. DICE SCORE (Tumor)
         intersection = np.logical_and(pred_mask, gt_mask).sum()
@@ -144,7 +162,6 @@ final_t_sen = metrics["tumors_detected"] / max(metrics["total_tumors_gt"], 1)
 final_spe = np.mean(metrics["specificity_scores"])
 final_auc = np.mean(metrics["auc_scores"])
 final_dsc = np.median(metrics["dice_scores"])
-
 
 print(f"   Patient-wise Sensitivity (P-Sen): {final_p_sen:.4f}")
 print(f"   Tumor-wise Sensitivity (T-Sen):   {final_t_sen:.4f}")
